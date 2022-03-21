@@ -21,7 +21,7 @@ import Data.STRef (STRef, modifySTRef', newSTRef, readSTRef)
 -- TODO: make a decision about Map
 newtype DisjointForest s a = DisjointForest {unDisjointForest :: STRef s (Map a (Entry s a))}
 
-newtype Entry s a = Entry {unEntry :: STRef s (EntryData s a)}
+type Entry s a = STRef s (EntryData s a)
 
 data EntryData s a
   = Root {entryValue :: a, entryRank :: Int}
@@ -36,11 +36,11 @@ fromList xs = do
 toDebugList :: DisjointForest s a -> ST s [(a, Int, a)]
 toDebugList (DisjointForest d) = do
   m <- readSTRef d
-  traverse (entryToTriple <=< readSTRef . unEntry) (M.elems m)
+  traverse (entryToTriple <=< readSTRef) (M.elems m)
   where
     entryToTriple Root {entryValue = v, entryRank = n} = pure (v, n, v)
     entryToTriple Node {entryValue = v, entryParent = p} = do
-      p_d <- readSTRef $ unEntry p
+      p_d <- readSTRef p
       pure (v, 0, entryValue p_d)
 
 toList :: DisjointForest s a -> ST s [a]
@@ -54,16 +54,16 @@ insert x d = do
   y <- find x d
   case y of
     Nothing -> do
-      e <- Entry <$> newSTRef (Root {entryValue = x, entryRank = 0})
+      e <- newSTRef (Root {entryValue = x, entryRank = 0})
       modifySTRef' (unDisjointForest d) $ M.insert x e
     Just _ -> pure ()
 
 find' :: Ord a => Entry s a -> ST s (Entry s a)
 find' e = do
-  e_d <- readSTRef (unEntry e)
+  e_d <- readSTRef e
   case e_d of
     Root {} -> pure e
-    Node {entryParent = e'} -> (let r = find' e' in (r >>= modifySTRef' (unEntry e) . parentReplace >> r))
+    Node {entryParent = e'} -> (let r = find' e' in (r >>= modifySTRef' e . parentReplace >> r))
       where
         parentReplace p e_d'@Node {} = e_d' {entryParent = p}
         parentReplace p Root {} = error "parentReplace should never be called on a Root"
@@ -75,7 +75,7 @@ find x d = do
     Nothing -> pure Nothing
     Just e -> do
       e' <- find' e
-      e_d' <- readSTRef (unEntry e')
+      e_d' <- readSTRef e'
       case e_d' of
         Root {entryValue = v} -> pure $ Just v
         Node {} -> error "find' should always return a Root"
@@ -86,13 +86,13 @@ union x y d = do
   insert y d
   m <- readSTRef (unDisjointForest d)
   -- fromJust cannot fail since we just inserted
-  e_x <- unEntry <$> (find' <$> fromJust $ M.lookup x m)
-  e_y <- unEntry <$> (find' <$> fromJust $ M.lookup y m)
+  e_x <- find' <$> fromJust $ M.lookup x m
+  e_y <- find' <$> fromJust $ M.lookup y m
   ed_x <- readSTRef e_x
   ed_y <- readSTRef e_y
   if entryRank ed_x < entryRank ed_y
-    then modifySTRef' e_x (newParent $ Entry e_y) >> modifySTRef' e_y incrRank
-    else modifySTRef' e_x incrRank >> modifySTRef' e_y (newParent $ Entry e_x)
+    then modifySTRef' e_x (newParent e_y) >> modifySTRef' e_y incrRank
+    else modifySTRef' e_x incrRank >> modifySTRef' e_y (newParent e_x)
   where
     newParent p Root {entryValue = v} = Node {entryValue = v, entryParent = p}
     newParent _ Node {} = error "newParent should only ever be called on a Root"
