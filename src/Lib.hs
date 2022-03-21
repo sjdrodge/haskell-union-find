@@ -10,7 +10,7 @@ module Lib
   )
 where
 
-import Control.Monad ((<=<))
+import Control.Monad
 import Control.Monad.ST (ST)
 import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
@@ -34,14 +34,10 @@ fromList xs = do
   pure d
 
 toDebugList :: DisjointForest s a -> ST s [(a, Int, a)]
-toDebugList (DisjointForest d) = do
-  m <- readSTRef d
-  traverse (entryToTriple <=< readSTRef) (M.elems m)
+toDebugList = readSTRef . unDisjointForest >=> traverse (readSTRef >=> entryToTriple) . M.elems
   where
     entryToTriple Root {entryValue = v, entryRank = n} = pure (v, n, v)
-    entryToTriple Node {entryValue = v, entryParent = p} = do
-      p_d <- readSTRef p
-      pure (v, 0, entryValue p_d)
+    entryToTriple Node {entryValue = v, entryParent = p} = (,,) v 0 . entryValue <$> readSTRef p
 
 toList :: DisjointForest s a -> ST s [a]
 toList (DisjointForest d) = M.keys <$> readSTRef d
