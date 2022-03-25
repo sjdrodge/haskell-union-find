@@ -18,6 +18,7 @@ import qualified Data.Map.Strict as M
 import Data.Maybe (fromJust)
 import Data.STRef (STRef, modifySTRef', newSTRef, readSTRef)
 
+-- TODO: Create a frozen version of the data structure and make a monad (transformer?)
 -- TODO: make a decision about Map
 newtype DisjointForest s a = DisjointForest {unDisjointForest :: STRef s (Map a (Entry s a))}
 
@@ -50,10 +51,12 @@ insert x d = do
   y <- find x d
   case y of
     Nothing -> do
-      e <- newSTRef (Root {entryValue = x, entryRank = 0})
+      e <- newSTRef $ Root {entryValue = x, entryRank = 0}
       modifySTRef' (unDisjointForest d) $ M.insert x e
     Just _ -> pure ()
 
+-- Does this blow the heap?
+-- TODO: clean a 'lil bit
 find' :: Ord a => Entry s a -> ST s (Entry s a)
 find' e = do
   e_d <- readSTRef e
@@ -66,15 +69,9 @@ find' e = do
 
 find :: Ord a => a -> DisjointForest s a -> ST s (Maybe a)
 find x d = do
-  m_e <- M.lookup x <$> readSTRef (unDisjointForest d)
-  case m_e of
-    Nothing -> pure Nothing
-    Just e -> do
-      e' <- find' e
-      e_d' <- readSTRef e'
-      case e_d' of
-        Root {entryValue = v} -> pure $ Just v
-        Node {} -> error "find' should always return a Root"
+  readSTRef (unDisjointForest d) >>= traverse f . M.lookup x
+  where
+    f e = entryValue <$> (find' e >>= readSTRef)
 
 union :: Ord a => a -> a -> DisjointForest s a -> ST s ()
 union x y d = do
