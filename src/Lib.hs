@@ -10,7 +10,7 @@ module Lib
   )
 where
 
-import Control.Monad
+import Control.Monad ((>=>))
 import Control.Monad.ST (ST)
 import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
@@ -28,6 +28,9 @@ data EntryData s a
   = Root {entryValue :: a, entryRank :: Int}
   | Node {entryValue :: a, entryParent :: Entry s a}
 
+readForest :: DisjointForest s a -> ST s (Map a (Entry s a))
+readForest = readSTRef . unDisjointForest
+
 fromList :: Ord a => [a] -> ST s (DisjointForest s a)
 fromList xs = do
   d <- empty
@@ -35,13 +38,13 @@ fromList xs = do
   pure d
 
 toDebugList :: DisjointForest s a -> ST s [(a, Int, a)]
-toDebugList = readSTRef . unDisjointForest >=> traverse (readSTRef >=> entryToTriple) . M.elems
+toDebugList = readForest >=> traverse (readSTRef >=> entryToTriple) . M.elems
   where
     entryToTriple Root {entryValue = v, entryRank = n} = pure (v, n, v)
     entryToTriple Node {entryValue = v, entryParent = p} = (,,) v 0 . entryValue <$> readSTRef p
 
 toList :: DisjointForest s a -> ST s [a]
-toList (DisjointForest d) = M.keys <$> readSTRef d
+toList d = M.keys <$> readForest d
 
 empty :: ST s (DisjointForest s a)
 empty = DisjointForest <$> newSTRef M.empty
@@ -65,11 +68,10 @@ find' e = do
     Node {entryParent = e'} -> (let r = find' e' in (r >>= modifySTRef' e . parentReplace >> r))
       where
         parentReplace p e_d'@Node {} = e_d' {entryParent = p}
-        parentReplace p Root {} = error "parentReplace should never be called on a Root"
+        parentReplace _ Root {} = error "parentReplace should never be called on a Root"
 
 find :: Ord a => a -> DisjointForest s a -> ST s (Maybe a)
-find x d = do
-  readSTRef (unDisjointForest d) >>= traverse f . M.lookup x
+find x = readForest >=> traverse f . M.lookup x
   where
     f e = entryValue <$> (find' e >>= readSTRef)
 
@@ -77,7 +79,7 @@ union :: Ord a => a -> a -> DisjointForest s a -> ST s ()
 union x y d = do
   insert x d
   insert y d
-  m <- readSTRef (unDisjointForest d)
+  m <- readForest d
   -- fromJust cannot fail since we just inserted
   e_x <- find' <$> fromJust $ M.lookup x m
   e_y <- find' <$> fromJust $ M.lookup y m
